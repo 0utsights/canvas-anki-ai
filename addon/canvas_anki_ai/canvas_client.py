@@ -19,7 +19,7 @@ from .models import (
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 LINK_PATTERN = re.compile(r'<([^>]+)>;\s*rel="([^"]+)"')
-USER_AGENT = "Canvas-Anki-AI/0.5.0"
+USER_AGENT = "Canvas-Anki-AI/0.6.0"
 
 
 class CanvasApiError(RuntimeError):

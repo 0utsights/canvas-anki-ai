@@ -53,6 +53,7 @@ The repository currently provides:
 - Source-aware semantic chunks with stable evidence IDs.
 - Conservative logistics filtering with uncertain content retained for review.
 - Provider-neutral, validated concept and card-generation contracts.
+- Reusable `Anki AI Bridge` client; Canvas owns no provider credentials.
 - Deterministic 3/5/7-card concept coverage matrices.
 - Session-only token handling; access tokens are not persisted to disk.
 - A comprehensive assignment policy spanning multiple difficulty levels.
@@ -78,7 +79,7 @@ Anki with **Tools -> Add-ons -> Install from file**.
 ## Roadmap
 
 1. Token-budgeted AI analysis batches
-2. First provider adapter and private credential configuration
+2. Shared bridge provider configuration and transmission approval
 3. Independent source verification and draft approval
 4. Anki note creation and duplicate prevention
 5. OCR for scanned PDFs and image-heavy slides

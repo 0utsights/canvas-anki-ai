@@ -4,6 +4,11 @@ Canvas Anki AI separates local preparation from external AI processing. The
 add-on currently defines and validates the provider contract but does not yet
 configure or call a real provider.
 
+Provider credentials and transport are delegated to the separate
+[`anki-ai-bridge`](https://github.com/0utsights/anki-ai-bridge) add-on. Canvas
+Anki AI includes only a small versioned client and adapter, so the same provider
+connection can be reused by other add-ons.
+
 ## Local Boundary
 
 Before any provider call, the add-on:
