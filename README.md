@@ -44,7 +44,9 @@ sent to an external provider without explicit configuration and confirmation.
 
 The repository currently provides:
 
-- An installable Anki add-on shell with a Tools menu entry.
+- An Anki setup dialog for Canvas URL, session token, and course selection.
+- Paginated discovery of active Canvas courses.
+- Session-only token handling; access tokens are not persisted to disk.
 - Core source and draft-card data models.
 - A conservative first-pass logistics filter.
 - A standard-library build script and unit tests.
@@ -63,13 +65,13 @@ Anki with **Tools -> Add-ons -> Install from file**.
 
 ## Roadmap
 
-1. Canvas URL and token setup with secure credential storage
-2. Active-course selection and module discovery
-3. Current-material ranking
-4. HTML, PDF, and PowerPoint extraction
-5. Draft-card generation provider interface
-6. Source verification and approval queue
-7. Incremental synchronization and duplicate prevention
+1. Module and module-item discovery for selected courses
+2. Current-material ranking
+3. HTML, PDF, and PowerPoint extraction
+4. Draft-card generation provider interface
+5. Source verification and approval queue
+6. Incremental synchronization and duplicate prevention
+7. Optional operating-system credential storage
 8. OAuth support for wider distribution
 
 ## Privacy
@@ -81,4 +83,3 @@ access wherever possible and will not submit assignments or modify courses.
 ## License
 
 [MIT](LICENSE)
-

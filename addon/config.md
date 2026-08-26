@@ -3,5 +3,5 @@
 Configuration is managed from **Tools -> Canvas Anki AI**.
 
 Do not place Canvas access tokens in this configuration file. Credential
-storage will use the operating system keychain.
-
+storage is session-only in the current version, so the token is forgotten when
+Anki closes. Optional operating-system keychain support is planned.

@@ -14,6 +14,13 @@ class SourceKind(str, Enum):
 
 
 @dataclass(frozen=True)
+class CanvasCourse:
+    course_id: int
+    name: str
+    course_code: str
+
+
+@dataclass(frozen=True)
 class SourceDocument:
     canvas_course_id: int
     canvas_item_id: str
@@ -45,4 +52,3 @@ class DraftCard:
     references: Tuple[SourceReference, ...]
     tags: Tuple[str, ...] = field(default_factory=tuple)
     confidence: Optional[float] = None
-

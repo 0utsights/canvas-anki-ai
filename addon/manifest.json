@@ -2,9 +2,8 @@
   "name": "Canvas Anki AI",
   "package": "canvas_anki_ai",
   "ankiweb_id": "",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "homepage": "https://github.com/0utsights/canvas-anki-ai",
   "conflicts": [],
   "mod": 0
 }
-
