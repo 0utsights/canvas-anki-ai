@@ -108,6 +108,63 @@ class CanvasClientTests(unittest.TestCase):
                 "https://attacker.example/collect",
             )
 
+    def test_discovers_inline_and_separately_loaded_module_items(self) -> None:
+        opener = FakeOpener(
+            [
+                FakeResponse(
+                    [
+                        {
+                            "id": 10,
+                            "name": "Current Unit",
+                            "position": 3,
+                            "state": "started",
+                            "unlock_at": "2026-08-20T12:00:00Z",
+                            "items": [
+                                {
+                                    "id": 100,
+                                    "content_id": 500,
+                                    "title": "Problem Set 3",
+                                    "type": "Assignment",
+                                    "position": 2,
+                                    "published": True,
+                                    "content_details": {
+                                        "due_at": "2026-08-28T23:59:00Z"
+                                    },
+                                }
+                            ],
+                        },
+                        {
+                            "id": 11,
+                            "name": "Reference Material",
+                            "position": 4,
+                            "state": "unlocked",
+                        },
+                    ]
+                ),
+                FakeResponse(
+                    [
+                        {
+                            "id": 101,
+                            "content_id": 501,
+                            "title": "Lecture Slides",
+                            "type": "File",
+                            "position": 1,
+                            "published": True,
+                        }
+                    ]
+                ),
+            ]
+        )
+        client = CanvasClient("https://school.instructure.com", "secret", opener)
+
+        modules = client.list_course_modules(7)
+
+        self.assertEqual(len(modules), 2)
+        self.assertEqual(modules[0].items[0].title, "Problem Set 3")
+        self.assertEqual(modules[0].items[0].due_at.year, 2026)
+        self.assertEqual(modules[1].items[0].title, "Lecture Slides")
+        self.assertIn("/courses/7/modules/11/items?", opener.requests[1][0].full_url)
+
 
 if __name__ == "__main__":
     unittest.main()

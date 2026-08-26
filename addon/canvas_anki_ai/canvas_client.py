@@ -1,11 +1,12 @@
 import json
 import re
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .models import CanvasCourse
+from .models import CanvasCourse, CanvasItemKind, CanvasModule, CanvasModuleItem
 
 
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -74,17 +75,33 @@ class CanvasClient:
                 ("per_page", "100"),
             ]
         )
-        url: Optional[str] = f"{self.base_url}/api/v1/courses?{query}"
-        courses: List[CanvasCourse] = []
-
-        while url:
-            payload, headers = self._get_json(url)
-            if not isinstance(payload, list):
-                raise CanvasApiError("Canvas returned an unexpected courses response")
-            courses.extend(self._parse_course(item) for item in payload)
-            url = self._next_page(headers)
-
+        url = f"{self.base_url}/api/v1/courses?{query}"
+        courses = [self._parse_course(item) for item in self._get_paginated(url)]
         return tuple(sorted(courses, key=lambda course: course.name.casefold()))
+
+    def list_course_modules(self, course_id: int) -> Tuple[CanvasModule, ...]:
+        query = urlencode(
+            [
+                ("include[]", "items"),
+                ("include[]", "content_details"),
+                ("per_page", "100"),
+            ]
+        )
+        url = f"{self.base_url}/api/v1/courses/{course_id}/modules?{query}"
+        return tuple(
+            self._parse_module(course_id, item) for item in self._get_paginated(url)
+        )
+
+    def _get_paginated(self, url: str) -> Tuple[Any, ...]:
+        results: List[Any] = []
+        next_url: Optional[str] = url
+        while next_url:
+            payload, headers = self._get_json(next_url)
+            if not isinstance(payload, list):
+                raise CanvasApiError("Canvas returned an unexpected paginated response")
+            results.extend(payload)
+            next_url = self._next_page(headers)
+        return tuple(results)
 
     def _get_json(self, url: str) -> Tuple[Any, Mapping[str, str]]:
         self._require_same_origin(url)
@@ -93,7 +110,7 @@ class CanvasClient:
             headers={
                 "Authorization": f"Bearer {self.access_token}",
                 "Accept": "application/json",
-                "User-Agent": "Canvas-Anki-AI/0.2.0",
+                "User-Agent": "Canvas-Anki-AI/0.3.0",
             },
         )
         try:
@@ -122,6 +139,85 @@ class CanvasClient:
             self._require_same_origin(next_url)
         return next_url
 
+    def _parse_module(self, course_id: int, item: Any) -> CanvasModule:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), int):
+            raise CanvasApiError("Canvas returned an invalid module record")
+        module_id = item["id"]
+        module_name = str(item.get("name") or f"Module {module_id}")
+        module_position = self._integer(item.get("position"), 0)
+        module_state = str(item.get("state") or "unknown")
+        module_unlock_at = self._datetime(item.get("unlock_at"))
+
+        raw_items = item.get("items")
+        if raw_items is None:
+            query = urlencode([("include[]", "content_details"), ("per_page", "100")])
+            url = (
+                f"{self.base_url}/api/v1/courses/{course_id}/modules/"
+                f"{module_id}/items?{query}"
+            )
+            raw_items = self._get_paginated(url)
+        if not isinstance(raw_items, (list, tuple)):
+            raise CanvasApiError("Canvas returned invalid module items")
+
+        items = tuple(
+            self._parse_module_item(
+                course_id,
+                module_id,
+                module_name,
+                module_position,
+                module_state,
+                module_unlock_at,
+                raw_item,
+            )
+            for raw_item in raw_items
+        )
+        return CanvasModule(
+            course_id,
+            module_id,
+            module_name,
+            module_position,
+            module_state,
+            module_unlock_at,
+            items,
+        )
+
+    def _parse_module_item(
+        self,
+        course_id: int,
+        module_id: int,
+        module_name: str,
+        module_position: int,
+        module_state: str,
+        module_unlock_at: Optional[datetime],
+        item: Any,
+    ) -> CanvasModuleItem:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), int):
+            raise CanvasApiError("Canvas returned an invalid module item")
+        details = item.get("content_details") or {}
+        if not isinstance(details, dict):
+            details = {}
+        content_id = item.get("content_id")
+        if not isinstance(content_id, int):
+            content_id = None
+        return CanvasModuleItem(
+            course_id=course_id,
+            module_id=module_id,
+            item_id=item["id"],
+            content_id=content_id,
+            title=str(item.get("title") or f"Item {item['id']}"),
+            kind=CanvasItemKind.from_canvas(item.get("type")),
+            position=self._integer(item.get("position"), 0),
+            module_name=module_name,
+            module_position=module_position,
+            module_state=module_state,
+            html_url=self._optional_string(item.get("html_url")),
+            due_at=self._datetime(details.get("due_at")),
+            unlock_at=self._datetime(details.get("unlock_at")),
+            lock_at=self._datetime(details.get("lock_at")),
+            module_unlock_at=module_unlock_at,
+            published=item.get("published") is not False,
+        )
+
     def _require_same_origin(self, url: str) -> None:
         expected = urlsplit(self.base_url)
         actual = urlsplit(url)
@@ -135,6 +231,23 @@ class CanvasClient:
         name = item.get("name") or item.get("course_code") or f"Course {item['id']}"
         course_code = item.get("course_code") or name
         return CanvasCourse(item["id"], str(name), str(course_code))
+
+    @staticmethod
+    def _datetime(value: Any) -> Optional[datetime]:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _integer(value: Any, default: int) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+    @staticmethod
+    def _optional_string(value: Any) -> Optional[str]:
+        return str(value) if value else None
 
     @staticmethod
     def _http_error_detail(error: HTTPError) -> str:

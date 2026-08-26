@@ -46,7 +46,10 @@ The repository currently provides:
 
 - An Anki setup dialog for Canvas URL, session token, and course selection.
 - Paginated discovery of active Canvas courses.
+- Module and module-item discovery with Canvas pagination fallbacks.
+- Current-material ranking from dates, module state, position, and source type.
 - Session-only token handling; access tokens are not persisted to disk.
+- A comprehensive assignment policy spanning multiple difficulty levels.
 - Core source and draft-card data models.
 - A conservative first-pass logistics filter.
 - A standard-library build script and unit tests.
@@ -65,14 +68,16 @@ Anki with **Tools -> Add-ons -> Install from file**.
 
 ## Roadmap
 
-1. Module and module-item discovery for selected courses
-2. Current-material ranking
-3. HTML, PDF, and PowerPoint extraction
-4. Draft-card generation provider interface
-5. Source verification and approval queue
-6. Incremental synchronization and duplicate prevention
-7. Optional operating-system credential storage
-8. OAuth support for wider distribution
+1. HTML, PDF, PowerPoint, page, and assignment extraction
+2. Coverage-matrix and concept extraction
+3. Draft-card generation provider interface
+4. Source verification and approval queue
+5. Incremental synchronization and duplicate prevention
+6. Optional operating-system credential storage
+7. OAuth support for wider distribution
+
+The assignment card strategy is documented in
+[`docs/card-generation-policy.md`](docs/card-generation-policy.md).
 
 ## Privacy
 

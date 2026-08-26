@@ -20,6 +20,55 @@ class CanvasCourse:
     course_code: str
 
 
+class CanvasItemKind(str, Enum):
+    PAGE = "Page"
+    FILE = "File"
+    ASSIGNMENT = "Assignment"
+    QUIZ = "Quiz"
+    DISCUSSION = "Discussion"
+    EXTERNAL_URL = "ExternalUrl"
+    EXTERNAL_TOOL = "ExternalTool"
+    OTHER = "Other"
+
+    @classmethod
+    def from_canvas(cls, value: object) -> "CanvasItemKind":
+        try:
+            return cls(str(value))
+        except ValueError:
+            return cls.OTHER
+
+
+@dataclass(frozen=True)
+class CanvasModuleItem:
+    course_id: int
+    module_id: int
+    item_id: int
+    content_id: Optional[int]
+    title: str
+    kind: CanvasItemKind
+    position: int
+    module_name: str
+    module_position: int
+    module_state: str
+    html_url: Optional[str] = None
+    due_at: Optional[datetime] = None
+    unlock_at: Optional[datetime] = None
+    lock_at: Optional[datetime] = None
+    module_unlock_at: Optional[datetime] = None
+    published: bool = True
+
+
+@dataclass(frozen=True)
+class CanvasModule:
+    course_id: int
+    module_id: int
+    name: str
+    position: int
+    state: str
+    unlock_at: Optional[datetime]
+    items: Tuple[CanvasModuleItem, ...]
+
+
 @dataclass(frozen=True)
 class SourceDocument:
     canvas_course_id: int
