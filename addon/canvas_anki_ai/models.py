@@ -50,6 +50,7 @@ class CanvasModuleItem:
     module_name: str
     module_position: int
     module_state: str
+    api_url: Optional[str] = None
     html_url: Optional[str] = None
     due_at: Optional[datetime] = None
     unlock_at: Optional[datetime] = None
@@ -67,6 +68,31 @@ class CanvasModule:
     state: str
     unlock_at: Optional[datetime]
     items: Tuple[CanvasModuleItem, ...]
+
+
+@dataclass(frozen=True)
+class ContentPayload:
+    course_id: int
+    source_id: str
+    title: str
+    kind: SourceKind
+    media_type: str
+    body: bytes
+    source_url: str
+    module_name: Optional[str] = None
+    due_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ExtractedSection:
+    location: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ExtractedContent:
+    payload: ContentPayload
+    sections: Tuple[ExtractedSection, ...]
 
 
 @dataclass(frozen=True)

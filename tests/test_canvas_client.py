@@ -26,7 +26,7 @@ class FakeResponse:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         return None
 
-    def read(self) -> bytes:
+    def read(self, size=None) -> bytes:
         return json.dumps(self.payload).encode("utf-8")
 
 
@@ -38,6 +38,11 @@ class FakeOpener:
     def __call__(self, request, timeout):
         self.requests.append((request, timeout))
         return self.responses.pop(0)
+
+
+class BinaryResponse(FakeResponse):
+    def read(self, size=None) -> bytes:
+        return self.payload if size is None else self.payload[:size]
 
 
 class NormalizeCanvasUrlTests(unittest.TestCase):
@@ -164,6 +169,88 @@ class CanvasClientTests(unittest.TestCase):
         self.assertEqual(modules[0].items[0].due_at.year, 2026)
         self.assertEqual(modules[1].items[0].title, "Lecture Slides")
         self.assertIn("/courses/7/modules/11/items?", opener.requests[1][0].full_url)
+
+    def test_fetches_page_and_file_without_sending_token_to_download_host(self) -> None:
+        api_opener = FakeOpener(
+            [
+                FakeResponse(
+                    {
+                        "title": "Cell Cycle",
+                        "body": "<p>DNA replication occurs during S phase.</p>",
+                        "html_url": "https://school.instructure.com/courses/7/pages/cell-cycle",
+                    }
+                ),
+                FakeResponse(
+                    {
+                        "display_name": "lecture.pdf",
+                        "content-type": "application/pdf",
+                        "size": 7,
+                        "url": "https://cdn.example.edu/signed-file",
+                        "html_url": "https://school.instructure.com/files/500",
+                    }
+                ),
+            ]
+        )
+        download_opener = FakeOpener(
+            [BinaryResponse(b"PDFDATA", {"Content-Type": "application/pdf"})]
+        )
+        client = CanvasClient(
+            "https://school.instructure.com",
+            "secret",
+            api_opener,
+            download_opener,
+        )
+        page = self._module_item(100, "Page", "https://school.instructure.com/api/page")
+        file_item = self._module_item(
+            101, "File", "https://school.instructure.com/api/file"
+        )
+
+        page_payload = client.fetch_item_content(page)
+        file_payload = client.fetch_item_content(file_item)
+
+        self.assertIn(b"DNA replication", page_payload.body)
+        self.assertEqual(file_payload.title, "lecture.pdf")
+        self.assertIsNone(
+            download_opener.requests[0][0].get_header("Authorization")
+        )
+
+    def test_fetches_syllabus_html(self) -> None:
+        opener = FakeOpener(
+            [
+                FakeResponse(
+                    {
+                        "id": 7,
+                        "name": "Biology",
+                        "syllabus_body": "<h2>Learning outcomes</h2>",
+                        "html_url": "https://school.instructure.com/courses/7",
+                    }
+                )
+            ]
+        )
+        client = CanvasClient("https://school.instructure.com", "secret", opener)
+
+        syllabus = client.fetch_course_syllabus(7)
+
+        self.assertEqual(syllabus.title, "Biology Syllabus")
+        self.assertIn(b"Learning outcomes", syllabus.body)
+
+    @staticmethod
+    def _module_item(item_id, item_type, api_url):
+        from canvas_anki_ai.models import CanvasItemKind, CanvasModuleItem
+
+        return CanvasModuleItem(
+            course_id=7,
+            module_id=10,
+            item_id=item_id,
+            content_id=500,
+            title=f"Item {item_id}",
+            kind=CanvasItemKind.from_canvas(item_type),
+            position=1,
+            module_name="Week One",
+            module_position=1,
+            module_state="started",
+            api_url=api_url,
+        )
 
 
 if __name__ == "__main__":

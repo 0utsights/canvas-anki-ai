@@ -48,6 +48,8 @@ The repository currently provides:
 - Paginated discovery of active Canvas courses.
 - Module and module-item discovery with Canvas pagination fallbacks.
 - Current-material ranking from dates, module state, position, and source type.
+- Local extraction of Canvas pages, assignments, discussions, quizzes, and syllabi.
+- Page-aware PDF, slide-aware PowerPoint, DOCX, HTML, and plain-text extraction.
 - Session-only token handling; access tokens are not persisted to disk.
 - A comprehensive assignment policy spanning multiple difficulty levels.
 - Core source and draft-card data models.
@@ -56,11 +58,14 @@ The repository currently provides:
 
 ## Development
 
-Requires Python 3.9 or newer.
+Requires Python 3.9 or newer. The build vendors the pinned `pypdf` dependency
+inside the add-on archive; Anki does not need a separate package installation.
 
 ```bash
-python -m unittest discover -s tests -v
-python scripts/build.py
+python -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-addon.txt
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python scripts/build.py
 ```
 
 The build command creates `dist/canvas-anki-ai.ankiaddon`. Install it from
@@ -68,7 +73,7 @@ Anki with **Tools -> Add-ons -> Install from file**.
 
 ## Roadmap
 
-1. HTML, PDF, PowerPoint, page, and assignment extraction
+1. OCR for scanned PDFs and image-heavy slides
 2. Coverage-matrix and concept extraction
 3. Draft-card generation provider interface
 4. Source verification and approval queue

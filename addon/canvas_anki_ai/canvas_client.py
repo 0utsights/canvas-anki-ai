@@ -6,10 +6,18 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .models import CanvasCourse, CanvasItemKind, CanvasModule, CanvasModuleItem
+from .models import (
+    CanvasCourse,
+    CanvasItemKind,
+    CanvasModule,
+    CanvasModuleItem,
+    ContentPayload,
+    SourceKind,
+)
 
 
 DEFAULT_TIMEOUT_SECONDS = 30
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 LINK_PATTERN = re.compile(r'<([^>]+)>;\s*rel="([^"]+)"')
 
 
@@ -40,6 +48,22 @@ class SameOriginRedirectHandler(HTTPRedirectHandler):
         )
 
 
+class SecureDownloadRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Mapping[str, str],
+        new_url: str,
+    ) -> Optional[Request]:
+        _validate_download_url(new_url)
+        return super().redirect_request(
+            request, file_pointer, code, message, headers, new_url
+        )
+
+
 def normalize_canvas_url(value: str) -> str:
     value = value.strip().rstrip("/")
     parts = urlsplit(value)
@@ -52,17 +76,30 @@ def normalize_canvas_url(value: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
 
 
+def _validate_download_url(value: str) -> None:
+    parts = urlsplit(value)
+    if parts.scheme == "https" and parts.netloc:
+        return
+    if parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}:
+        return
+    raise CanvasApiError("Canvas returned an unsafe file download URL")
+
+
 class CanvasClient:
     def __init__(
         self,
         base_url: str,
         access_token: str,
         opener: Optional[Callable[..., Any]] = None,
+        download_opener: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.base_url = normalize_canvas_url(base_url)
         self.access_token = access_token.strip()
         self._opener = opener or build_opener(
             SameOriginRedirectHandler(self.base_url)
+        ).open
+        self._download_opener = download_opener or build_opener(
+            SecureDownloadRedirectHandler()
         ).open
         if not self.access_token:
             raise ValueError("Canvas access token is required")
@@ -90,6 +127,52 @@ class CanvasClient:
         url = f"{self.base_url}/api/v1/courses/{course_id}/modules?{query}"
         return tuple(
             self._parse_module(course_id, item) for item in self._get_paginated(url)
+        )
+
+    def fetch_course_syllabus(self, course_id: int) -> Optional[ContentPayload]:
+        query = urlencode([("include[]", "syllabus_body")])
+        url = f"{self.base_url}/api/v1/courses/{course_id}?{query}"
+        payload, _ = self._get_json(url)
+        if not isinstance(payload, dict):
+            raise CanvasApiError("Canvas returned an invalid course response")
+        body = payload.get("syllabus_body")
+        if not isinstance(body, str) or not body.strip():
+            return None
+        title = str(payload.get("name") or f"Course {course_id}")
+        return ContentPayload(
+            course_id=course_id,
+            source_id=f"course:{course_id}:syllabus",
+            title=f"{title} Syllabus",
+            kind=SourceKind.SYLLABUS,
+            media_type="text/html",
+            body=body.encode("utf-8"),
+            source_url=str(payload.get("html_url") or url),
+        )
+
+    def fetch_item_content(self, item: CanvasModuleItem) -> ContentPayload:
+        if not item.api_url:
+            raise CanvasApiError(f"{item.title} does not expose a Canvas content API URL")
+        payload, _ = self._get_json(item.api_url)
+        if not isinstance(payload, dict):
+            raise CanvasApiError("Canvas returned an invalid content response")
+        if item.kind == CanvasItemKind.FILE:
+            return self._file_payload(item, payload)
+
+        body_field, source_kind = self._content_field_and_kind(item.kind)
+        body = payload.get(body_field)
+        if not isinstance(body, str) or not body.strip():
+            raise CanvasApiError(f"{item.title} does not contain extractable text")
+        title = str(payload.get("title") or payload.get("name") or item.title)
+        return ContentPayload(
+            course_id=item.course_id,
+            source_id=f"item:{item.item_id}",
+            title=title,
+            kind=source_kind,
+            media_type="text/html",
+            body=body.encode("utf-8"),
+            source_url=str(payload.get("html_url") or item.html_url or item.api_url),
+            module_name=item.module_name,
+            due_at=item.due_at,
         )
 
     def _get_paginated(self, url: str) -> Tuple[Any, ...]:
@@ -210,6 +293,7 @@ class CanvasClient:
             module_name=module_name,
             module_position=module_position,
             module_state=module_state,
+            api_url=self._optional_string(item.get("url")),
             html_url=self._optional_string(item.get("html_url")),
             due_at=self._datetime(details.get("due_at")),
             unlock_at=self._datetime(details.get("unlock_at")),
@@ -217,6 +301,78 @@ class CanvasClient:
             module_unlock_at=module_unlock_at,
             published=item.get("published") is not False,
         )
+
+    def _file_payload(
+        self, item: CanvasModuleItem, payload: Mapping[str, Any]
+    ) -> ContentPayload:
+        download_url = payload.get("url")
+        if not isinstance(download_url, str):
+            raise CanvasApiError(f"{item.title} does not expose a download URL")
+        declared_size = payload.get("size")
+        if isinstance(declared_size, int) and declared_size > MAX_DOWNLOAD_BYTES:
+            raise CanvasApiError(f"{item.title} exceeds the 50 MB download limit")
+        body, response_type = self._download_file(download_url)
+        title = str(
+            payload.get("display_name") or payload.get("filename") or item.title
+        )
+        media_type = str(payload.get("content-type") or response_type or "application/octet-stream")
+        return ContentPayload(
+            course_id=item.course_id,
+            source_id=f"file:{item.content_id or item.item_id}",
+            title=title,
+            kind=self._file_source_kind(title, media_type),
+            media_type=media_type,
+            body=body,
+            source_url=str(payload.get("html_url") or item.html_url or item.api_url),
+            module_name=item.module_name,
+            due_at=item.due_at,
+        )
+
+    def _download_file(self, url: str) -> Tuple[bytes, str]:
+        _validate_download_url(url)
+        request = Request(url, headers={"User-Agent": "Canvas-Anki-AI/0.4.0"})
+        try:
+            with self._download_opener(
+                request, timeout=DEFAULT_TIMEOUT_SECONDS
+            ) as response:
+                content_length = response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        if int(content_length) > MAX_DOWNLOAD_BYTES:
+                            raise CanvasApiError(
+                                "Canvas file exceeds the 50 MB download limit"
+                            )
+                    except ValueError:
+                        pass
+                body = response.read(MAX_DOWNLOAD_BYTES + 1)
+                if len(body) > MAX_DOWNLOAD_BYTES:
+                    raise CanvasApiError("Canvas file exceeds the 50 MB download limit")
+                return body, str(response.headers.get("Content-Type") or "")
+        except HTTPError as error:
+            raise CanvasApiError(f"Canvas file download failed ({error.code})") from error
+        except URLError as error:
+            raise CanvasApiError(f"Could not download Canvas file: {error.reason}") from error
+
+    @staticmethod
+    def _content_field_and_kind(kind: CanvasItemKind) -> Tuple[str, SourceKind]:
+        fields = {
+            CanvasItemKind.PAGE: ("body", SourceKind.PAGE),
+            CanvasItemKind.ASSIGNMENT: ("description", SourceKind.ASSIGNMENT),
+            CanvasItemKind.QUIZ: ("description", SourceKind.OTHER),
+            CanvasItemKind.DISCUSSION: ("message", SourceKind.OTHER),
+        }
+        if kind not in fields:
+            raise CanvasApiError(f"{kind.value} content is not supported yet")
+        return fields[kind]
+
+    @staticmethod
+    def _file_source_kind(title: str, media_type: str) -> SourceKind:
+        lowered = title.casefold()
+        if lowered.endswith(".pdf") or "pdf" in media_type.casefold():
+            return SourceKind.PDF
+        if lowered.endswith((".pptx", ".ppt")) or "presentation" in media_type.casefold():
+            return SourceKind.SLIDES
+        return SourceKind.OTHER
 
     def _require_same_origin(self, url: str) -> None:
         expected = urlsplit(self.base_url)

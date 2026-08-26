@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple
 from aqt import mw
 from aqt.qt import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -12,14 +13,16 @@ from aqt.qt import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     Qt,
 )
 
 from .canvas_client import CanvasClient, normalize_canvas_url
+from .content_extractor import extract_content
 from .material_ranking import RankedMaterial, rank_current_material
-from .models import CanvasCourse
+from .models import CanvasCourse, CanvasItemKind, ExtractedContent
 from .session import SESSION
 from .settings import AddonSettings
 
@@ -31,6 +34,7 @@ class SetupDialog(QDialog):
         config = mw.addonManager.getConfig(addon_module) or {}
         self.settings = AddonSettings.from_mapping(config)
         self.courses: List[CanvasCourse] = []
+        self.scanning_client = None
         session_matches = SESSION.canvas_base_url == self.settings.canvas_base_url
         self.has_loaded_courses = session_matches and SESSION.courses_loaded
         self.loading_base_url = ""
@@ -152,6 +156,7 @@ class SetupDialog(QDialog):
 
         self.preview_button.setEnabled(False)
         self.preview_button.setText("Scanning Modules…")
+        self.scanning_client = client
 
         def discover() -> Tuple[RankedMaterial, ...]:
             modules = []
@@ -173,7 +178,16 @@ class SetupDialog(QDialog):
         course_names: Dict[int, str] = {
             course.course_id: course.name for course in self.courses
         }
-        dialog = MaterialPreviewDialog(materials, course_names, self)
+        if self.scanning_client is None:
+            QMessageBox.critical(self, "Canvas scan failed", "Canvas session was lost.")
+            return
+        dialog = MaterialPreviewDialog(
+            materials,
+            course_names,
+            self.selected_course_ids(),
+            self.scanning_client,
+            self,
+        )
         dialog.exec()
 
     def selected_course_ids(self) -> Tuple[int, ...]:
@@ -207,11 +221,15 @@ class MaterialPreviewDialog(QDialog):
         self,
         materials: Tuple[RankedMaterial, ...],
         course_names: Dict[int, str],
+        course_ids: Tuple[int, ...],
+        client: CanvasClient,
         parent: QDialog,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Current Canvas Material")
         self.resize(760, 520)
+        self.client = client
+        self.course_ids = course_ids
 
         explanation = QLabel(
             "Items are ranked from Canvas dates, module state, module position, and source type. "
@@ -219,8 +237,15 @@ class MaterialPreviewDialog(QDialog):
         )
         explanation.setWordWrap(True)
 
-        material_list = QListWidget()
-        for material in materials:
+        self.material_list = QListWidget()
+        supported_kinds = {
+            CanvasItemKind.PAGE,
+            CanvasItemKind.FILE,
+            CanvasItemKind.ASSIGNMENT,
+            CanvasItemKind.QUIZ,
+            CanvasItemKind.DISCUSSION,
+        }
+        for index, material in enumerate(materials):
             source = material.item
             course_name = course_names.get(source.course_id, f"Course {source.course_id}")
             label = (
@@ -228,21 +253,149 @@ class MaterialPreviewDialog(QDialog):
                 f"{source.title} ({source.kind.value})"
             )
             item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, source)
+            should_extract = (
+                index < 25
+                and material.score >= 40
+                and source.kind in supported_kinds
+                and bool(source.api_url)
+            )
+            item.setCheckState(
+                Qt.CheckState.Checked if should_extract else Qt.CheckState.Unchecked
+            )
             details = "; ".join(material.reasons)
             if source.due_at:
                 details += f"; due {source.due_at.isoformat()}"
             if source.html_url:
                 details += f"\n{source.html_url}"
             item.setToolTip(details)
-            material_list.addItem(item)
+            self.material_list.addItem(item)
 
         if not materials:
-            material_list.addItem("No published module material was found.")
+            self.material_list.addItem("No published module material was found.")
+
+        self.include_syllabi = QCheckBox("Include course syllabi")
+        self.include_syllabi.setChecked(True)
+        self.extract_button = QPushButton("Extract Selected Content")
+        self.extract_button.clicked.connect(self.extract_selected)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
         layout.addWidget(explanation)
-        layout.addWidget(material_list)
+        layout.addWidget(self.material_list)
+        layout.addWidget(self.include_syllabi)
+        layout.addWidget(self.extract_button)
         layout.addWidget(buttons)
+
+    def extract_selected(self) -> None:
+        selected_items = []
+        for index in range(self.material_list.count()):
+            item = self.material_list.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                source = item.data(Qt.ItemDataRole.UserRole)
+                if source:
+                    selected_items.append(source)
+
+        if not selected_items and not self.include_syllabi.isChecked():
+            QMessageBox.warning(
+                self, "Canvas Anki AI", "Select material or include a syllabus first."
+            )
+            return
+        if len(selected_items) > 30:
+            QMessageBox.warning(
+                self,
+                "Canvas Anki AI",
+                "Select no more than 30 items in one extraction batch.",
+            )
+            return
+
+        include_syllabi = self.include_syllabi.isChecked()
+        self.extract_button.setEnabled(False)
+        self.extract_button.setText("Extracting…")
+
+        def extract_batch():
+            extracted = []
+            errors = []
+            for source in selected_items:
+                try:
+                    extracted.append(extract_content(self.client.fetch_item_content(source)))
+                except Exception as error:
+                    errors.append(f"{source.title}: {error}")
+            if include_syllabi:
+                for course_id in self.course_ids:
+                    try:
+                        syllabus = self.client.fetch_course_syllabus(course_id)
+                        if syllabus:
+                            extracted.append(extract_content(syllabus))
+                    except Exception as error:
+                        errors.append(f"Course {course_id} syllabus: {error}")
+            return tuple(extracted), tuple(errors)
+
+        mw.taskman.run_in_background(extract_batch, self.on_content_extracted)
+
+    def on_content_extracted(self, future: Future) -> None:
+        self.extract_button.setEnabled(True)
+        self.extract_button.setText("Extract Selected Content")
+        try:
+            extracted, errors = future.result()
+        except Exception as error:
+            QMessageBox.critical(self, "Canvas extraction failed", str(error))
+            return
+        dialog = ExtractionPreviewDialog(extracted, errors, self)
+        dialog.exec()
+
+
+class ExtractionPreviewDialog(QDialog):
+    def __init__(
+        self,
+        extracted: Tuple[ExtractedContent, ...],
+        errors: Tuple[str, ...],
+        parent: QDialog,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Extracted Canvas Content")
+        self.resize(820, 620)
+
+        summary = QLabel(
+            f"Extracted {len(extracted)} sources with {len(errors)} errors. "
+            "Content remains local and has not been sent to AI."
+        )
+        summary.setWordWrap(True)
+
+        preview = QPlainTextEdit()
+        preview.setReadOnly(True)
+        preview.setPlainText(self._preview_text(extracted, errors))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(summary)
+        layout.addWidget(preview)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _preview_text(
+        extracted: Tuple[ExtractedContent, ...], errors: Tuple[str, ...]
+    ) -> str:
+        parts = []
+        remaining_characters = 200_000
+        for content in extracted:
+            if remaining_characters <= 0:
+                break
+            parts.append(f"# {content.payload.title}")
+            for section in content.sections:
+                if remaining_characters <= 0:
+                    break
+                text = section.text[: min(2500, remaining_characters)]
+                remaining_characters -= len(text)
+                if len(text) < len(section.text):
+                    text += "\n[…preview truncated…]"
+                parts.append(f"\n## {section.location}\n{text}")
+        if remaining_characters <= 0:
+            parts.append("\n[…overall preview limit reached…]")
+        if errors:
+            parts.append("\n# Extraction Errors\n" + "\n".join(f"- {error}" for error in errors))
+        return "\n\n".join(parts) or "No extractable content was found."
