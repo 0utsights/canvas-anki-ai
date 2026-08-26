@@ -19,6 +19,7 @@ from .models import (
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 LINK_PATTERN = re.compile(r'<([^>]+)>;\s*rel="([^"]+)"')
+USER_AGENT = "Canvas-Anki-AI/0.4.0"
 
 
 class CanvasApiError(RuntimeError):
@@ -193,7 +194,7 @@ class CanvasClient:
             headers={
                 "Authorization": f"Bearer {self.access_token}",
                 "Accept": "application/json",
-                "User-Agent": "Canvas-Anki-AI/0.3.0",
+                "User-Agent": USER_AGENT,
             },
         )
         try:
@@ -330,7 +331,7 @@ class CanvasClient:
 
     def _download_file(self, url: str) -> Tuple[bytes, str]:
         _validate_download_url(url)
-        request = Request(url, headers={"User-Agent": "Canvas-Anki-AI/0.4.0"})
+        request = Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with self._download_opener(
                 request, timeout=DEFAULT_TIMEOUT_SECONDS
