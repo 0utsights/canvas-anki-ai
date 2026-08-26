@@ -21,10 +21,12 @@ from aqt.qt import (
 
 from .canvas_client import CanvasClient, normalize_canvas_url
 from .content_extractor import extract_content
+from .content_preparation import prepare_corpus
 from .material_ranking import RankedMaterial, rank_current_material
 from .models import CanvasCourse, CanvasItemKind, ExtractedContent
 from .session import SESSION
 from .settings import AddonSettings
+from .study_models import PreparedCorpus
 
 
 class SetupDialog(QDialog):
@@ -357,6 +359,7 @@ class ExtractionPreviewDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Extracted Canvas Content")
         self.resize(820, 620)
+        self.extracted = extracted
 
         summary = QLabel(
             f"Extracted {len(extracted)} sources with {len(errors)} errors. "
@@ -368,13 +371,35 @@ class ExtractionPreviewDialog(QDialog):
         preview.setReadOnly(True)
         preview.setPlainText(self._preview_text(extracted, errors))
 
+        self.prepare_button = QPushButton("Prepare Local Study Corpus")
+        self.prepare_button.clicked.connect(self.prepare_study_corpus)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
         layout.addWidget(summary)
         layout.addWidget(preview)
+        layout.addWidget(self.prepare_button)
         layout.addWidget(buttons)
+
+    def prepare_study_corpus(self) -> None:
+        self.prepare_button.setEnabled(False)
+        self.prepare_button.setText("Preparing…")
+        mw.taskman.run_in_background(
+            lambda: prepare_corpus(self.extracted), self.on_corpus_prepared
+        )
+
+    def on_corpus_prepared(self, future: Future) -> None:
+        self.prepare_button.setEnabled(True)
+        self.prepare_button.setText("Prepare Local Study Corpus")
+        try:
+            corpus = future.result()
+        except Exception as error:
+            QMessageBox.critical(self, "Study preparation failed", str(error))
+            return
+        dialog = PreparedCorpusDialog(corpus, self)
+        dialog.exec()
 
     @staticmethod
     def _preview_text(
@@ -399,3 +424,67 @@ class ExtractionPreviewDialog(QDialog):
         if errors:
             parts.append("\n# Extraction Errors\n" + "\n".join(f"- {error}" for error in errors))
         return "\n\n".join(parts) or "No extractable content was found."
+
+
+class PreparedCorpusDialog(QDialog):
+    def __init__(self, corpus: PreparedCorpus, parent: QDialog) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Prepared Study Corpus")
+        self.resize(840, 640)
+
+        estimated_tokens = sum(chunk.estimated_tokens for chunk in corpus.included)
+        summary = QLabel(
+            f"Prepared {len(corpus.included)} instructional/uncertain chunks "
+            f"(~{estimated_tokens:,} tokens) and excluded {len(corpus.excluded)} "
+            "high-confidence logistics chunks. Nothing has been sent to AI."
+        )
+        summary.setWordWrap(True)
+
+        preview = QPlainTextEdit()
+        preview.setReadOnly(True)
+        preview.setPlainText(self._corpus_text(corpus))
+
+        provider_note = QLabel(
+            "The provider-neutral AI contract is ready, but no provider is configured yet. "
+            "The next step will send only approved included chunks for concept analysis."
+        )
+        provider_note.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(summary)
+        layout.addWidget(preview)
+        layout.addWidget(provider_note)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _corpus_text(corpus: PreparedCorpus) -> str:
+        parts = ["# Included Chunks"]
+        remaining_characters = 200_000
+        for chunk in corpus.included:
+            if remaining_characters <= 0:
+                break
+            entry = (
+                f"[{chunk.category.value}] {chunk.chunk_id} | "
+                f"{chunk.locator.source_title} | {chunk.locator.location}\n{chunk.text}"
+            )
+            entry = entry[:remaining_characters]
+            remaining_characters -= len(entry)
+            parts.append(entry)
+        if corpus.excluded and remaining_characters > 0:
+            parts.append("# Excluded Logistics")
+            for chunk in corpus.excluded:
+                if remaining_characters <= 0:
+                    break
+                entry = (
+                    f"{chunk.chunk_id} | {chunk.locator.source_title} | "
+                    f"{chunk.locator.location}\n{chunk.text}"
+                )
+                entry = entry[:remaining_characters]
+                remaining_characters -= len(entry)
+                parts.append(entry)
+        if remaining_characters <= 0:
+            parts.append("[…overall preview limit reached…]")
+        return "\n\n".join(parts)

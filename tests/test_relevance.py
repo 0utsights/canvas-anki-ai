@@ -31,7 +31,11 @@ class ClassifyTextTests(unittest.TestCase):
 
         self.assertEqual(result.category, ContentCategory.UNCERTAIN)
 
+    def test_single_logistics_signal_is_kept_for_later_review(self) -> None:
+        result = classify_text("Office hours are listed on Canvas.")
+
+        self.assertEqual(result.category, ContentCategory.UNCERTAIN)
+
 
 if __name__ == "__main__":
     unittest.main()
-

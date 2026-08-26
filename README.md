@@ -50,6 +50,10 @@ The repository currently provides:
 - Current-material ranking from dates, module state, position, and source type.
 - Local extraction of Canvas pages, assignments, discussions, quizzes, and syllabi.
 - Page-aware PDF, slide-aware PowerPoint, DOCX, HTML, and plain-text extraction.
+- Source-aware semantic chunks with stable evidence IDs.
+- Conservative logistics filtering with uncertain content retained for review.
+- Provider-neutral, validated concept and card-generation contracts.
+- Deterministic 3/5/7-card concept coverage matrices.
 - Session-only token handling; access tokens are not persisted to disk.
 - A comprehensive assignment policy spanning multiple difficulty levels.
 - Core source and draft-card data models.
@@ -73,16 +77,18 @@ Anki with **Tools -> Add-ons -> Install from file**.
 
 ## Roadmap
 
-1. OCR for scanned PDFs and image-heavy slides
-2. Coverage-matrix and concept extraction
-3. Draft-card generation provider interface
-4. Source verification and approval queue
-5. Incremental synchronization and duplicate prevention
+1. Token-budgeted AI analysis batches
+2. First provider adapter and private credential configuration
+3. Independent source verification and draft approval
+4. Anki note creation and duplicate prevention
+5. OCR for scanned PDFs and image-heavy slides
 6. Optional operating-system credential storage
 7. OAuth support for wider distribution
 
 The assignment card strategy is documented in
 [`docs/card-generation-policy.md`](docs/card-generation-policy.md).
+The strict provider boundary is documented in
+[`docs/ai-provider-contract.md`](docs/ai-provider-contract.md).
 
 ## Privacy
 
